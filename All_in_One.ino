@@ -2,6 +2,8 @@
 #define _eTaskGetState
 #define MIN_PULSE_LENGTH 900
 #define MAX_PULSE_LENGTH 1900
+#define IDLE_SPEED 950 //1000 is enough
+#define TOP_SPEED 1200
 #include "mpu6050.h"
 #include "I2Cdev.h"
 #include "HMC5883L.h"
@@ -14,6 +16,7 @@
 #include <WiFi.h>
 #include <ESP32_Servo.h>
 #include "MPU6050_6Axis_MotionApps20.h"
+#include "Definitions.h"
 //Declare intances 
 MPU6050 accelgyro;
 HMC5883L mag(0x1E);
@@ -33,70 +36,14 @@ float heading, declinationAngle, headingdeg;
 Kalman kalmanX; // Create the Kalman instances
 Kalman kalmanY;
 
-double Timer;
-/* IMU Data */
-double accX, accY, accZ;
-double gyroX, gyroY, gyroZ;
-int16_t tempRaw;
-int16_t ax, ay, az;
-int16_t gx, gy, gz;
-double gyroXangle, gyroYangle; // Angle calculate using the gyro only
-double compAngleX, compAngleY; // Calculated angle using a complementary filter
-double kalAngleX, kalAngleY; // Calculated angle using a Kalman filter
-
-uint32_t timer;
-uint8_t i2cData[14]; // Buffer for I2C data
-uint8_t devStatus;   
-//Task Handle
-TaskHandle_t Task1,Task2,Task3,Task4;
-
-//MS5611 Vars
-double ref_pres,altitude_r,filteredval;
-
-// MAC Address
-uint8_t broadcastAddress[] = {0xB0, 0xB2, 0x1C, 0xA8, 0x77, 0xB0};
-
-//Structure for data transfer
-typedef struct struct_message {
-  char a[32];
-  float b;
-  float c;
-  float d;
-  double e;
-  int f;
-  int g;
-  int h;
-  int i;
-  int l;
-  int m;
-} struct_message;
-esp_now_peer_info_t peerInfo;
-struct_message myData;
-
-//Data Received
-String Data_recv;
-char dat;
-typedef struct delivery
-{
-  String A;
-} delivery;
-delivery deli_package;
-
-//Other Variables
-String Data,height,rev_Pid;
-int strlength,dex;
-
 //Declare PID Lib
-double Kp_1=40,Ki_1=1.0,Kd_1=0.1;
-double Kp_2=10,Ki_2=0.1,Kd_2=0.1;
-double Kp_3=10,Ki_3=0.1,Kd_3=0.1;
-double Kp_4=5,Ki_4=0,Kd_4=1.0;
+
 double input_1,out_Thrust,input_2,out_Roll,input_3,out_Pitch,input_4,out_Yaw;
 double setpoint_1,setpoint_2,setpoint_3,setpoint_4;
-PID pid_Thrust(&input_1, &out_Thrust, &setpoint_1, Kp_1, Ki_1, Kd_1, DIRECT);
-PID pid_Roll(&input_2, &out_Roll, &setpoint_2, Kp_2, Ki_2, Kd_2, DIRECT);
-PID pid_Pitch(&input_3, &out_Pitch, &setpoint_3, Kp_3, Ki_3, Kd_3, DIRECT);
-PID pid_Yaw(&input_4, &out_Yaw, &setpoint_4, Kp_4, Ki_4, Kd_4, DIRECT);
+PID pid_Thrust(&input_1, &out_Thrust, &setpoint_1, Pid_1[0].Kp, Pid_1[0].Ki, Pid_1[0].Kd, DIRECT);
+PID pid_Roll(&input_2, &out_Roll, &setpoint_2, Pid_1[1].Kp, Pid_1[1].Ki, Pid_1[1].Kd, DIRECT);
+PID pid_Pitch(&input_3, &out_Pitch, &setpoint_3, Pid_1[2].Kp, Pid_1[2].Ki, Pid_1[2].Kd, DIRECT);
+PID pid_Yaw(&input_4, &out_Yaw, &setpoint_4, Pid_1[3].Kp, Pid_1[3].Ki, Pid_1[3].Kd, DIRECT);
 
 //Declare motor vars
 double motor_1,motor_2,motor_3,motor_4,motor_5,motor_6;
@@ -113,9 +60,9 @@ const int servo6Pin = 15;
 
 void setup() {
     // join I2C bus (I2Cdev library doesn't do this automatically)
+    
     Wire.begin();
     Wire.setClock(400000);
-    Serial.print("[2J");  
     accelgyro.initialize();
     accelgyro.setI2CBypassEnabled(true);
     Serial.begin(115200);
@@ -189,20 +136,28 @@ void setup() {
   delay(1000);
   //PID setup
   pid_Thrust.SetMode(AUTOMATIC);
-  pid_Thrust.SetOutputLimits(-1900, 1900);
+  pid_Thrust.SetOutputLimits(-1000, 1000);
   pid_Roll.SetMode(AUTOMATIC);
-  pid_Roll.SetOutputLimits(-1900, 1900);
+  pid_Roll.SetOutputLimits(-1000, 1000);
   pid_Pitch.SetMode(AUTOMATIC);
-  pid_Pitch.SetOutputLimits(-1900, 1900);
+  pid_Pitch.SetOutputLimits(-1000, 1000);
   pid_Yaw.SetMode(AUTOMATIC);
-  pid_Yaw.SetOutputLimits(-1900, 1900);
+  pid_Yaw.SetOutputLimits(-1000, 1000);
   //
-  servo1.attach(servo1Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
-  servo2.attach(servo2Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
-  servo3.attach(servo3Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
-  servo4.attach(servo4Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
-  servo5.attach(servo5Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
-  servo6.attach(servo6Pin,MIN_PULSE_LENGTH,MAX_PULSE_LENGTH);
+  servo1.attach(servo1Pin,MIN_PULSE_LENGTH,1200);
+  servo2.attach(servo2Pin,MIN_PULSE_LENGTH,1200);
+  servo3.attach(servo3Pin,MIN_PULSE_LENGTH,1200);
+  servo4.attach(servo4Pin,MIN_PULSE_LENGTH,1200);
+  servo5.attach(servo5Pin,MIN_PULSE_LENGTH,1200);
+  servo6.attach(servo6Pin,MIN_PULSE_LENGTH,1200);
+
+  servo1.writeMicroseconds(MIN_PULSE_LENGTH);
+  servo2.writeMicroseconds(MIN_PULSE_LENGTH);
+  servo3.writeMicroseconds(MIN_PULSE_LENGTH);
+  servo4.writeMicroseconds(MIN_PULSE_LENGTH);
+  servo5.writeMicroseconds(MIN_PULSE_LENGTH);
+  servo6.writeMicroseconds(MIN_PULSE_LENGTH);
+ 
   // Setpoint heading
   setpoint_4 = 33;
   delay(1000);
@@ -245,6 +200,7 @@ void setup() {
     1   
  );
  vTaskSuspend(Task3);
+ allstop();
  Serial.println("Task3 is created and suspended");
  delay(500);
   xTaskCreatePinnedToCore
@@ -347,6 +303,11 @@ void Task1core(void * parameter)
     // allstop();
     // }
     vTaskDelay(1/ portTICK_PERIOD_MS);
+    if(abs(kalAngleX) > 20 || abs(kalAngleY) > 20)
+    {
+      vTaskSuspend(Task3);
+      allstop();
+    }
   }
 }
 void Task2core (void * parameter)
@@ -358,12 +319,12 @@ void Task2core (void * parameter)
         myData.b = kalAngleY;
         myData.d = headingdeg;
         myData.e = filteredval;
-        myData.f = (int)motor_1;
-        myData.g = (int)motor_2;
-        myData.h = (int)motor_3;
-        myData.i = (int)motor_4;
-        myData.l = (int)motor_5;
-        myData.m = (int)motor_6;
+        myData.f = motor_1;
+        myData.g = motor_2;
+        myData.h = motor_3;
+        myData.i = motor_4;
+        myData.l = motor_5;
+        myData.m = motor_6;
         esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
         // if (result == ESP_OK) {
         // Serial.println("Sending confirmed");
@@ -383,40 +344,33 @@ void TaskCore1Pid (void* parameter)
   for(;;)
   {
     input_1 = (int)filteredval;
-    input_2 = kalAngleY;
+    input_2 = kalAngleY; //this is 100% correct
     input_3 = kalAngleX;
     //input_4 = headingdeg;
     //pid_Thrust.Compute();
     pid_Roll.Compute();
     pid_Pitch.Compute();
     //pid_Yaw.Compute();
-    motor_1 = out_Thrust + out_Roll + out_Pitch; //front left
-    motor_2 = out_Thrust + out_Roll + out_Pitch; //rear left
-    motor_3 = out_Thrust + out_Roll - out_Pitch; //back left
-    motor_4 = out_Thrust - out_Roll - out_Pitch; // back right
-    motor_5 = out_Thrust - out_Roll + out_Pitch; //rear righ
-    motor_6 = out_Thrust - out_Roll + out_Pitch; //front right
-    // esc_2 = throttle - pid_output_pitch + pid_output_roll - pid_output_yaw; //pulse for esc 1 (front-right - CCW) motor 6
-    // esc_1 = throttle + pid_output_pitch + pid_output_roll + pid_output_yaw; //pulse for esc 2 (rear-right - CW)
-    // esc_4 = throttle + pid_output_pitch - pid_output_roll - pid_output_yaw; //pulse for esc 3 (rear-left - CCW)
-    // esc_3 = throttle - pid_output_pitch - pid_output_roll + pid_output_yaw; //pulse for esc 4 (front-left - CW) motor 1
-    // esc_5 = throttle + pid_output_pitch - pid_output_roll - pid_output_yaw; //?
-    // esc_6 = throttle - pid_output_pitch - pid_output_roll + pid_output_yaw; //?
-    //for 4 motors
-    // motor_1 = output_1+output_2+output_3;
-    // motor_2 = output_1-output_2+output_3;
-    // motor_3 = output_1+output_2-output_3+output_4;
-    // motor_4 = output_1-output_2-output_3;
-    // motor_5 = output_1+output_2-output_3;
-    // motor_6 = output_1-output_2+output_3-output_4;
-    servo1.writeMicroseconds(motor_1 = motor_1*10 < 950 ? 950 :motor_1*10 > 1200 ? 1200 : motor_1*10);
-    servo2.writeMicroseconds(motor_2 = motor_2*10 < 950 ? 950 :motor_2*10 > 1200 ? 1200 : motor_2*10);
-    servo3.writeMicroseconds(motor_3 = motor_3*10 < 950 ? 950 :motor_3*10 > 1200 ? 1200 : motor_3*10);
-    servo4.writeMicroseconds(motor_4 = motor_4*10 < 950 ? 950 :motor_4*10 > 1200 ? 1200 : motor_4*10);
-    servo5.writeMicroseconds(motor_5 = motor_5*10 < 950 ? 950 :motor_5*10 > 1200 ? 1200 : motor_5*10);
-    servo6.writeMicroseconds(motor_6 = motor_6*10 < 950 ? 950 :motor_6*10 > 1200 ? 1200 : motor_6*10);
+    // motor_1 = out_Thrust + out_Roll + out_Pitch; //front left
+    // motor_2 = out_Thrust + out_Roll ; //rear left
+    // motor_3 = out_Thrust + out_Roll - out_Pitch; //back left
+    // motor_4 = out_Thrust - out_Roll - out_Pitch; // back right
+    // motor_5 = out_Thrust - out_Roll ; //rear righ
+    // motor_6 = out_Thrust - out_Roll + out_Pitch; //front right
+    motor_2 = out_Thrust + out_Roll + out_Pitch; //front left
+    motor_3 = out_Thrust + out_Roll - out_Pitch; //rear left
+    // motor_4 = out_Thrust + out_Roll - out_Pitch; //back left
+    // motor_5 = out_Thrust - out_Roll - out_Pitch; // back right
+    motor_6 = out_Thrust - out_Roll - out_Pitch; //rear right
+    motor_1 = out_Thrust - out_Roll + out_Pitch; //front right
+
+    servo1.writeMicroseconds(motor_1 = motor_1 < IDLE_SPEED ? IDLE_SPEED :motor_1 > TOP_SPEED ? TOP_SPEED : motor_1);
+    servo2.writeMicroseconds(motor_2 = motor_2 < IDLE_SPEED ? IDLE_SPEED :motor_2 > TOP_SPEED ? TOP_SPEED : motor_2);
+    servo3.writeMicroseconds(motor_3 = motor_3 < 950 ? 950 :motor_3 > TOP_SPEED ? TOP_SPEED : motor_3);
+    servo4.writeMicroseconds(motor_4 = motor_4 < IDLE_SPEED ? IDLE_SPEED :motor_4 > TOP_SPEED ? TOP_SPEED : motor_4);
+    servo5.writeMicroseconds(motor_5 = motor_5 < IDLE_SPEED ? IDLE_SPEED :motor_5 > TOP_SPEED ? TOP_SPEED : motor_5);
+    servo6.writeMicroseconds(motor_6 = motor_6 < 950 ? 950 :motor_6 > TOP_SPEED ? TOP_SPEED : motor_6);
     
-    //Serial.println(input_2);
     vTaskDelay(1/ portTICK_PERIOD_MS);
   }
 
@@ -445,6 +399,7 @@ void TaskCore1BLDC (void* parameter)
     
   }
 }
+
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&deli_package, incomingData, sizeof(deli_package));
   Serial.print(deli_package.A);
@@ -452,7 +407,8 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   //Serial.println(strlength);
   Data = deli_package.A;
   char res = deli_package.A.charAt(strlength-strlength);
-  Serial.println(res);
+  char code = deli_package.A.charAt(1);
+  Serial.println(code);
   switch (res)
   {
     case 'A':
@@ -479,11 +435,11 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     break;
     case 'E':
     Serial.println("Pause all");
+    allstop();
     vTaskSuspend(Task1);
     vTaskSuspend(Task2);
     vTaskSuspend(Task3);
     vTaskSuspend(Task4);
-    allstop();
     break;
     case 'F':
     dex = deli_package.A.indexOf("F");
@@ -492,23 +448,90 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     setpoint_1 = height.toDouble();
     break;
     case 'P':
-    dex = deli_package.A.indexOf("P");
-    rev_Pid = deli_package.A.substring(1,strlength-1);
-    Serial.println(rev_Pid);
-    Kp_2,Kp_3 = rev_Pid.toDouble();
+    changevalPD(code, res);
+    break;
+    case 'K':
+    changevalPD(code, res);
     break;
     case 'I':
-    dex = deli_package.A.indexOf("I");
-    rev_Pid = deli_package.A.substring(1,strlength-1);
-    Serial.println(rev_Pid);
-    Ki_2,Ki_3 = rev_Pid.toDouble(); 
-    break;   
+    changevalPD(code, res);
+    break;        
     default:
     Serial.println("Wrong Code");
     break;
   }
 }
-
+void changevalPD(char code, char cd)
+{
+  if (code == '2')
+  {
+    rev_Pid = deli_package.A.substring(2,strlength);  
+    if(cd == 'P')
+    {
+      Pid_1[1].Kp = rev_Pid.toDouble();
+      pid_Roll.SetTunings(Pid_1[1].Kp,Pid_1[1].Ki,Pid_1[1].Kd);
+      Serial.println(pid_Roll.GetKp());
+    }
+    else if (cd =='K')
+    {
+      Pid_1[1].Kd = rev_Pid.toDouble();
+      pid_Roll.SetTunings(Pid_1[1].Kp,Pid_1[1].Ki,Pid_1[1].Kd);
+      Serial.println(pid_Roll.GetKd());
+    }
+    else if (cd =='I')
+    {
+      Pid_1[1].Ki = rev_Pid.toDouble();
+      pid_Roll.SetTunings(Pid_1[1].Kp,Pid_1[1].Ki,Pid_1[1].Kd);
+      Serial.println(pid_Roll.GetKi());
+    }
+  }
+  else if (code == '3')
+  {
+    rev_Pid = deli_package.A.substring(2,strlength);
+    if(cd == 'P')
+    {
+      Pid_1[2].Kp = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[2].Kp,Pid_1[2].Ki,Pid_1[2].Kd);
+      Serial.println(pid_Pitch.GetKp());
+    }
+    else if (cd =='K')
+    {
+      Pid_1[2].Kd = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[2].Kp,Pid_1[2].Ki,Pid_1[2].Kd);
+      Serial.println(pid_Pitch.GetKd());
+    }
+    else if (cd =='I')
+    {
+      Pid_1[2].Ki = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[2].Kp,Pid_1[2].Ki,Pid_1[2].Kd);
+      Serial.println(pid_Roll.GetKi());
+    }   
+  }
+  else if (code == '1')
+  {
+    rev_Pid = deli_package.A.substring(2,strlength);
+    switch(cd)
+    {
+      case 'P':
+      Pid_1[0].Kp = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[0].Kp,Pid_1[0].Ki,Pid_1[0].Kd);
+      Serial.println(pid_Pitch.GetKp());
+      break;
+      case 'I':
+      Pid_1[0].Ki = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[0].Kp,Pid_1[0].Ki,Pid_1[0].Kd);
+      Serial.println(pid_Pitch.GetKi());
+      break;
+      case 'K':
+      Pid_1[0].Kd = rev_Pid.toDouble();
+      pid_Pitch.SetTunings(Pid_1[0].Kp,Pid_1[0].Ki,Pid_1[0].Kd);
+      Serial.println(pid_Pitch.GetKd());
+      break;
+      default:
+      break;
+    }
+  }
+}
 void test()
 {
     for (int i = MIN_PULSE_LENGTH; i <= 1100; i += 5) {
@@ -540,13 +563,6 @@ void allstop()
     servo4.writeMicroseconds(MIN_PULSE_LENGTH);
     servo5.writeMicroseconds(MIN_PULSE_LENGTH);
     servo6.writeMicroseconds(MIN_PULSE_LENGTH);
-}
-double Constraint (double low, double high, double value)
-{
-  value = value < low ? low :
-  value > high ? high:
-  value;
-  return value*10;
 }
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   // Serial.print("\r\nLast Packet Send Status:\t");
